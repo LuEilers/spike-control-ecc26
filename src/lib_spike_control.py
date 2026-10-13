@@ -185,6 +185,16 @@ class spiking_control_system:
 
 # Generate 1D trajectory for a simple two-neuron spiking control system with given parameters
 def generate_1d_traj(a, eps0, theta, leak, grid, target, x0, x_max=np.inf):
+    # INPUTS:
+    # a: exponential growth rate of uncontrolled dynamics
+    # eps0: magnitude of spikes
+    # theta: neuron thresholds
+    # leak: neuron leakage
+    # grid: time grid for simulation
+    # target: target trajectory
+    # x0: initial state
+    # x_max: maximum norm of x before simulation is stopped
+    
     K=1
     N=2
 
@@ -197,7 +207,7 @@ def generate_1d_traj(a, eps0, theta, leak, grid, target, x0, x_max=np.inf):
     delay = 0.
     leak_vec = leak * np.ones(N)
 
-    ie_dyn_dict = {
+    this_scs_dict = {
         'x0': x0,
         'f_x': lambda x: a * x,
         'G': lambda x,y,z: (np.array([np.max([x-y,0]), np.max([y-x,0])]), 0),
@@ -209,8 +219,8 @@ def generate_1d_traj(a, eps0, theta, leak, grid, target, x0, x_max=np.inf):
         'x_max': x_max,
         }
 
-    ie_contr_dyn = spiking_control_system(ie_dyn_dict)
-    z, s, x = ie_contr_dyn.control_exec(grid, target)
+    this_scs = spiking_control_system(this_scs_dict)
+    z, s, x = this_scs.control_exec(grid, target)
 
     n_grid = len(grid)
 
@@ -237,3 +247,70 @@ def generate_1d_traj(a, eps0, theta, leak, grid, target, x0, x_max=np.inf):
     else:
         i_end = len(x)
         return grid[0:i_end], x[0:i_end]
+
+# Generate 2D trajectory for a simple four-neuron spiking control system with given parameters
+def generate_2d_traj(a, kappa, eps0, theta, leak, grid, target, x0):
+    # PARAMETERS:
+    # a: exponential growth rate of uncontrolled dynamics on the radial direction
+    # kappa: rotation rate of uncontrolled dynamics on the angular direction
+    # eps0: magnitude of spikes
+    # theta: neuron thresholds
+    # leak: neuron leakage
+    # grid: time grid for simulation
+    # target: target trajectory
+    # x0: initial state
+
+    K=2
+    N=4
+
+    # Define parameters
+    t_ref = 0
+
+    # Four neurons with spikes in all axes directions
+    B = eps0* np.array([-1, 0,
+                        1, 0,
+                        0,-1,
+                        0, 1]).reshape((N,K)).T
+
+    theta_vec = theta * np.ones(N)
+    delay = 0.
+    leak_vec = leak * np.ones(N)
+
+    # System dynamics with exponential growth a and radial rotation kappa
+    A = np.array([a,kappa,
+                -kappa,a]).reshape((K,K))
+
+    this_scs_dict = {
+        'x0': x0,
+        'f_x': lambda x: A @ x,
+        'G': lambda x,y,z: (np.array([np.maximum(x[0]-y[0],0),
+                                    np.maximum(y[0]-x[0],0),
+                                    np.maximum(x[1]-y[1],0),
+                                    np.maximum(y[1]-x[1],0)]),0),
+        't_ref': t_ref,
+        'input_matrix': B,
+        'theta': theta_vec,
+        'delta': delay,
+        'leak': leak_vec,
+        }
+
+    this_scs = spiking_control_system(this_scs_dict)
+    z, s, x = this_scs.control_exec(grid, target)
+
+    n_grid = len(grid)
+
+    # Separate x in continuous parts (x_cont) and jumps (x_jumps) for plotting purposes
+    event_times = np.where(np.max(s, axis=1)>0)
+    event_times_connected = np.sort(np.concatenate((event_times[0], event_times[0]+1)))
+    event_times_connected = event_times_connected[event_times_connected<n_grid]
+
+    x_cont = x[:,].copy()
+    x_cont[event_times,0], x_cont[event_times,1] = np.nan, np.nan
+    x_jumps = np.empty((n_grid,2))
+    x_jumps[:] = np.nan
+    x_jumps[event_times_connected,:] = x[event_times_connected,:]
+
+    # Define x_c as in the paper
+    x_c = x[1:,:] + (B @ (z[:-1].T / theta_vec[:,np.newaxis])).T
+    
+    return z, s, x, x_cont, x_jumps, x_c
